@@ -1,0 +1,7 @@
+Framework: Vite
+Build command: npm run build
+Output directory: dist
+Install command: npm install
+Environment variables:
+VITE_SUPABASE_URL
+VITE_SUPABASE_ANON_KEY

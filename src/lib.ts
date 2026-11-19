@@ -1,0 +1,10 @@
+import { createClient } from '@supabase/supabase-js';
+export const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+export const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+export const isConfigured = Boolean(supabaseUrl && supabaseKey && !supabaseUrl.includes('SEU-PROJETO'));
+export const supabase = isConfigured ? createClient(supabaseUrl!, supabaseKey!) : null;
+export type Role = 'admin' | 'driver' | 'viewer';
+export type Profile = { id: string; full_name: string; role: Role; active: boolean };
+export type Vehicle = { id: string; plate: string; brand: string; model: string; year: number | null; current_km: number; status: 'available'|'in_use'|'maintenance'|'inactive' };
+export const fmtKm = (n:number) => new Intl.NumberFormat('pt-BR').format(n) + ' km';
+export const fmtMoney = (n:number) => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n);
