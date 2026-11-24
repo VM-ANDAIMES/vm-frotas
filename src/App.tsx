@@ -413,7 +413,158 @@ function TripRows({
     </div>
   );
 }
-function Maintenance({vehicles,admin,onDone}:{vehicles:Vehicle[];admin:boolean;onDone:()=>void}){const [msg,setMsg]=useState('');return <section className="panel"><div className="panel-head"><div><h3>Controle de manutenção</h3><p>Registre manutenções e acompanhe os veículos em oficina</p></div></div><div className="empty-state"><Wrench size={36}/><b>Módulo de manutenção</b><p>Use o formulário para registrar uma manutenção e atualizar a situação do veículo.</p></div>{admin&&<form className="inline-form" onSubmit={async e=>{e.preventDefault();if(!supabase)return;const f=new FormData(e.currentTarget);const {error}=await supabase.from('maintenance').insert({vehicle_id:f.get('vehicle'),description:f.get('description'),cost:Number(f.get('cost'))||0,service_date:f.get('date')});if(error){setMsg(error.message);return;}await supabase.from('vehicles').update({status:'maintenance'}).eq('id',String(f.get('vehicle')));setMsg('Manutenção registrada.');onDone();}}><select name="vehicle" required>{vehicles.map(v=><option value={v.id} key={v.id}>{v.plate} · {v.model}</option>)}</select><input name="description" required placeholder="Serviço realizado"/><input name="date" type="date" required/><input name="cost" type="number" min="0" step="0.01" placeholder="Custo R$"/><button className="primary">Registrar</button></form>}{msg&&<p className="hint">{msg}</p>}</section>}
-function FuelLog({vehicles,drivers,currentUser,admin,onDone}:{vehicles:Vehicle[];drivers:Profile[];currentUser:Profile;admin:boolean;onDone:()=>void}){const [msg,setMsg]=useState('');return <section className="panel"><div className="panel-head"><div><h3>Abastecimentos</h3><p>Registre litros, valor e quilometragem para acompanhar consumo</p></div></div><form className="inline-form" onSubmit={async e=>{e.preventDefault();if(!supabase)return;const f=new FormData(e.currentTarget);const {error}=await supabase.from('fuel_logs').insert({vehicle_id:f.get('vehicle'),driver_id:admin?(f.get('driver')||null):currentUser.id,liters:Number(f.get('liters')),total_cost:Number(f.get('cost')),odometer_km:Number(f.get('km')),station:f.get('station')||null});if(error){setMsg(error.message);return;}setMsg('Abastecimento registrado.');onDone();}}><select name="vehicle" required>{vehicles.map(v=><option key={v.id} value={v.id}>{v.plate} · {v.model}</option>)}</select>{admin&&<select name="driver"><option value="">Motorista (opcional)</option>{drivers.map(d=><option key={d.id} value={d.id}>{d.full_name}</option>)}</select>}<input name="liters" type="number" step="0.01" min="0.01" placeholder="Litros" required/><input name="cost" type="number" step="0.01" min="0" placeholder="Valor total R$" required/><input name="km" type="number" min="0" placeholder="KM atual" required/><input name="station" placeholder="Posto"/><button className="primary">Salvar abastecimento</button></form>{msg&&<p className="hint">{msg}</p>}</section>}
+function Maintenance({vehicles,admin,onDone}:{vehicles:Vehicle[];admin:boolean;onDone:()=>void}){
+  const [msg,setMsg]=useState('');
+  const [records,setRecords]=useState<any[]>([]);
+  const [loadingRecords,setLoadingRecords]=useState(false);
+
+  async function loadRecords(){
+    if(!supabase||!admin)return;
+    setLoadingRecords(true);
+    const {data,error}=await supabase.from('maintenance').select('*').order('service_date',{ascending:false}).limit(100);
+    if(error)setMsg('Erro ao carregar manutenções: '+error.message);
+    else setRecords(data||[]);
+    setLoadingRecords(false);
+  }
+
+  useEffect(()=>{loadRecords();},[admin]);
+
+  async function deleteRecord(record:any){
+    if(!supabase||!admin)return;
+    const vehicle=vehicles.find(v=>v.id===record.vehicle_id);
+    const date=String(record.service_date||'').split('-').reverse().join('/');
+    if(!window.confirm('Confirma excluir esta manutenção?\n\nVeículo: '+(vehicle?.plate||'Não identificado')+'\nServiço: '+record.description+'\nData: '+date+'\n\nEsta ação não poderá ser desfeita.'))return;
+    const {error}=await supabase.from('maintenance').delete().eq('id',record.id);
+    if(error){setMsg('Não foi possível excluir: '+error.message);return;}
+    setMsg('Manutenção excluída com sucesso.');
+    await loadRecords();
+    onDone();
+  }
+
+  return <section className="panel">
+    <div className="panel-head"><div><h3>Controle de manutenção</h3><p>Registre manutenções e acompanhe os veículos em oficina</p></div></div>
+    <div className="empty-state"><Wrench size={36}/><b>Módulo de manutenção</b><p>Use o formulário para registrar uma manutenção e atualizar a situação do veículo.</p></div>
+    {admin&&<form className="inline-form" onSubmit={async e=>{
+      e.preventDefault();
+      if(!supabase)return;
+      const f=new FormData(e.currentTarget);
+      const {error}=await supabase.from('maintenance').insert({
+        vehicle_id:f.get('vehicle'),
+        description:f.get('description'),
+        cost:Number(f.get('cost'))||0,
+        service_date:f.get('date')
+      });
+      if(error){setMsg(error.message);return;}
+      await supabase.from('vehicles').update({status:'maintenance'}).eq('id',String(f.get('vehicle')));
+      setMsg('Manutenção registrada.');
+      e.currentTarget.reset();
+      await loadRecords();
+      onDone();
+    }}>
+      <select name="vehicle" required>{vehicles.map(v=><option value={v.id} key={v.id}>{v.plate} · {v.model}</option>)}</select>
+      <input name="description" required placeholder="Serviço realizado"/>
+      <input name="date" type="date" required/>
+      <input name="cost" type="number" min="0" step="0.01" placeholder="Custo R$"/>
+      <button className="primary">Registrar</button>
+    </form>}
+    {msg&&<p className="hint">{msg}</p>}
+    {admin&&<>
+      <div className="panel-head" style={{marginTop:24}}><div><h3>Histórico de manutenções</h3><p>Registros mais recentes</p></div></div>
+      {loadingRecords?<p className="empty">Carregando histórico...</p>:records.length===0?<p className="empty">Nenhuma manutenção registrada.</p>:
+        <div className="table-wrap"><table><thead><tr><th>Data</th><th>Veículo</th><th>Serviço</th><th>Custo</th><th>Ação</th></tr></thead><tbody>
+          {records.map(record=>{
+            const vehicle=vehicles.find(v=>v.id===record.vehicle_id);
+            return <tr key={record.id}>
+              <td>{String(record.service_date||'').split('-').reverse().join('/')}</td>
+              <td><b>{vehicle?.plate||'Veículo não encontrado'}</b></td>
+              <td>{record.description}</td>
+              <td>{fmtMoney(Number(record.cost)||0)}</td>
+              <td><button type="button" className="small-btn" onClick={()=>deleteRecord(record)}><Trash2 size={15}/> Excluir</button></td>
+            </tr>;
+          })}
+        </tbody></table></div>
+      }
+    </>}
+  </section>;
+}
+
+function FuelLog({vehicles,drivers,currentUser,admin,onDone}:{vehicles:Vehicle[];drivers:Profile[];currentUser:Profile;admin:boolean;onDone:()=>void}){
+  const [msg,setMsg]=useState('');
+  const [records,setRecords]=useState<any[]>([]);
+  const [loadingRecords,setLoadingRecords]=useState(false);
+
+  async function loadRecords(){
+    if(!supabase)return;
+    setLoadingRecords(true);
+    const {data,error}=await supabase.from('fuel_logs').select('*').order('fueled_at',{ascending:false}).limit(100);
+    if(error)setMsg('Erro ao carregar abastecimentos: '+error.message);
+    else setRecords(data||[]);
+    setLoadingRecords(false);
+  }
+
+  useEffect(()=>{loadRecords();},[]);
+
+  async function deleteRecord(record:any){
+    if(!supabase||!admin)return;
+    const vehicle=vehicles.find(v=>v.id===record.vehicle_id);
+    const date=record.fueled_at?new Date(record.fueled_at).toLocaleString('pt-BR'):'Data não informada';
+    if(!window.confirm('Confirma excluir este abastecimento?\n\nVeículo: '+(vehicle?.plate||'Não identificado')+'\nData: '+date+'\nLitros: '+record.liters+'\nValor: '+fmtMoney(Number(record.total_cost)||0)+'\n\nEsta ação não poderá ser desfeita.'))return;
+    const {error}=await supabase.from('fuel_logs').delete().eq('id',record.id);
+    if(error){setMsg('Não foi possível excluir: '+error.message);return;}
+    setMsg('Abastecimento excluído com sucesso.');
+    await loadRecords();
+    onDone();
+  }
+
+  return <section className="panel">
+    <div className="panel-head"><div><h3>Abastecimentos</h3><p>Registre litros, valor e quilometragem para acompanhar consumo</p></div></div>
+    <form className="inline-form" onSubmit={async e=>{
+      e.preventDefault();
+      if(!supabase)return;
+      const f=new FormData(e.currentTarget);
+      const {error}=await supabase.from('fuel_logs').insert({
+        vehicle_id:f.get('vehicle'),
+        driver_id:admin?(f.get('driver')||null):currentUser.id,
+        liters:Number(f.get('liters')),
+        total_cost:Number(f.get('cost')),
+        odometer_km:Number(f.get('km')),
+        station:f.get('station')||null
+      });
+      if(error){setMsg(error.message);return;}
+      setMsg('Abastecimento registrado.');
+      e.currentTarget.reset();
+      await loadRecords();
+      onDone();
+    }}>
+      <select name="vehicle" required>{vehicles.map(v=><option key={v.id} value={v.id}>{v.plate} · {v.model}</option>)}</select>
+      {admin&&<select name="driver"><option value="">Motorista (opcional)</option>{drivers.map(d=><option key={d.id} value={d.id}>{d.full_name}</option>)}</select>}
+      <input name="liters" type="number" step="0.01" min="0.01" placeholder="Litros" required/>
+      <input name="cost" type="number" step="0.01" min="0" placeholder="Valor total R$" required/>
+      <input name="km" type="number" min="0" placeholder="KM atual" required/>
+      <input name="station" placeholder="Posto"/>
+      <button className="primary">Salvar abastecimento</button>
+    </form>
+    {msg&&<p className="hint">{msg}</p>}
+    <div className="panel-head" style={{marginTop:24}}><div><h3>Histórico de abastecimentos</h3><p>Últimos registros da frota</p></div></div>
+    {loadingRecords?<p className="empty">Carregando histórico...</p>:records.length===0?<p className="empty">Nenhum abastecimento registrado.</p>:
+      <div className="table-wrap"><table><thead><tr><th>Data</th><th>Veículo</th><th>Motorista</th><th>Litros</th><th>Valor</th><th>KM</th><th>Posto</th>{admin&&<th>Ação</th>}</tr></thead><tbody>
+        {records.map(record=>{
+          const vehicle=vehicles.find(v=>v.id===record.vehicle_id);
+          const driver=drivers.find(d=>d.id===record.driver_id);
+          return <tr key={record.id}>
+            <td>{record.fueled_at?new Date(record.fueled_at).toLocaleString('pt-BR'):'-'}</td>
+            <td><b>{vehicle?.plate||'Não identificado'}</b></td>
+            <td>{driver?.full_name||'-'}</td>
+            <td>{Number(record.liters).toLocaleString('pt-BR')} L</td>
+            <td>{fmtMoney(Number(record.total_cost)||0)}</td>
+            <td>{fmtKm(Number(record.odometer_km)||0)}</td>
+            <td>{record.station||'-'}</td>
+            {admin&&<td><button type="button" className="small-btn" onClick={()=>deleteRecord(record)}><Trash2 size={15}/> Excluir</button></td>}
+          </tr>;
+        })}
+      </tbody></table></div>
+    }
+  </section>;
+}
 function Modal({title,onClose,children}:{title:string;onClose:()=>void;children:ReactNode}){return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={e=>e.stopPropagation()}><div className="modal-head"><h3>{title}</h3><button className="icon-btn" onClick={onClose}><X/></button></div>{children}</div></div>}
 function SetupScreen(){return <div className="login-wrap"><div className="login-card"><img src="/logo-vm.png" className="login-logo"/><h1>VM <span>FROTAS</span></h1><div className="setup-box"><b>Configuração inicial necessária</b><p>Crie o projeto no Supabase, execute o arquivo <code>supabase/schema.sql</code> e configure as variáveis de ambiente no arquivo <code>.env</code>.</p><p>Consulte o <code>README.md</code> incluído no projeto para seguir o passo a passo.</p></div></div></div>}
