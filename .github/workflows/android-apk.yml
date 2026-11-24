@@ -39,12 +39,14 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
-      - name: Criar projeto Android
-        run: npx cap add android
+                    - name: Criar projeto Android
+          run: npx cap add android
 
-      - name: Sincronizar Capacitor
-        run: npx cap sync android
+        - name: Gerar icones oficiais VM
+          run: npx capacitor-assets generate --android --iconBackgroundColor "#FFFFFF" --splashBackgroundColor "#FFFFFF"
 
+        - name: Sincronizar Capacitor
+          run: npx cap sync android
       - name: Compilar APK
         run: |
           cd android
