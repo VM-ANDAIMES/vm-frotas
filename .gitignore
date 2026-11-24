@@ -8,3 +8,12 @@ android/build
 .env*
 supabase/.temp/
 src/App-backup-*.tsx
+
+# Arquivos locais e backups
+/MainActivity-backup.java
+/capacitor.config-backup-safearea.ts
+/android/powershell
+/android/.idea/
+/src/*backup*
+/src/*.bak
+/src/*.disabled

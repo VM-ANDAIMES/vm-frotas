@@ -59,9 +59,19 @@ export default function App(){
  return()=>{cancelled=true;};
 },[session]);
  useEffect(()=>{load();},[session]);
- async function signIn(e:FormEvent){e.preventDefault();setLoginError(''); if(!supabase)return;const {error}=await supabase.auth.signInWithPassword({email,password});if(error)setLoginError(error.message);}
- async function signOut(){await supabase?.auth.signOut();setProfile(null);setSession(null);}
- async function saveVehicle(e:FormEvent<HTMLFormElement>){
+ async function signIn(e:FormEvent){
+  e.preventDefault();
+  setLoginError('');
+  if(!supabase)return;
+  const {error}=await supabase.auth.signInWithPassword({email:email.trim(),password});
+  if(error){setLoginError(error.message);return;}
+}
+async function signOut(){
+  await supabase?.auth.signOut();
+  setProfile(null);
+  setSession(null);
+}
+async function saveVehicle(e:FormEvent<HTMLFormElement>){
   e.preventDefault();
   if(!supabase||!isAdmin)return;
   const f=new FormData(e.currentTarget);
@@ -70,7 +80,10 @@ export default function App(){
     ? await supabase.from('vehicles').update(values).eq('id',editingVehicle.id)
     : await supabase.from('vehicles').insert({...values,status:'available'});
   if(result.error){setNotice('Não foi possível salvar o veículo: '+result.error.message);return;}
-  setModal(null);setEditingVehicle(null);setNotice(modal==='vehicle-edit'?'Veículo atualizado.':'Veículo cadastrado.');await load();
+  setModal(null);
+  setEditingVehicle(null);
+  setNotice(modal==='vehicle-edit'?'Veículo atualizado.':'Veículo cadastrado.');
+  await load();
 }
 async function deleteVehicle(vehicle:Vehicle){
   if(!supabase||!isAdmin)return;
@@ -347,6 +360,8 @@ function TripRows({
           <tr>
             <th>Veículo</th>
             <th>Motorista</th>
+             <th>Data/hora retirada</th>
+             <th>Data/hora devolução</th>
             <th>KM saída</th>
             <th>KM retorno</th>
             {detailed && <th>Distância</th>}
@@ -366,6 +381,8 @@ function TripRows({
               <tr key={t.id}>
                 <td><b>{v?.plate || 'Veículo'}</b></td>
                 <td>{d?.full_name || 'Motorista'}</td>
+                 <td>{new Date(t.started_at).toLocaleString('pt-BR')}</td>
+                 <td>{t.ended_at ? new Date(t.ended_at).toLocaleString('pt-BR') : 'Em andamento'}</td>
                 <td>{fmtKm(t.start_km)}</td>
                 <td>{t.end_km === null ? '—' : fmtKm(t.end_km)}</td>
 
@@ -413,7 +430,322 @@ function TripRows({
     </div>
   );
 }
-function Maintenance({vehicles,admin,onDone}:{vehicles:Vehicle[];admin:boolean;onDone:()=>void}){const [msg,setMsg]=useState('');return <section className="panel"><div className="panel-head"><div><h3>Controle de manutenção</h3><p>Registre manutenções e acompanhe os veículos em oficina</p></div></div><div className="empty-state"><Wrench size={36}/><b>Módulo de manutenção</b><p>Use o formulário para registrar uma manutenção e atualizar a situação do veículo.</p></div>{admin&&<form className="inline-form" onSubmit={async e=>{e.preventDefault();if(!supabase)return;const f=new FormData(e.currentTarget);const {error}=await supabase.from('maintenance').insert({vehicle_id:f.get('vehicle'),description:f.get('description'),cost:Number(f.get('cost'))||0,service_date:f.get('date')});if(error){setMsg(error.message);return;}await supabase.from('vehicles').update({status:'maintenance'}).eq('id',String(f.get('vehicle')));setMsg('Manutenção registrada.');onDone();}}><select name="vehicle" required>{vehicles.map(v=><option value={v.id} key={v.id}>{v.plate} · {v.model}</option>)}</select><input name="description" required placeholder="Serviço realizado"/><input name="date" type="date" required/><input name="cost" type="number" min="0" step="0.01" placeholder="Custo R$"/><button className="primary">Registrar</button></form>}{msg&&<p className="hint">{msg}</p>}</section>}
-function FuelLog({vehicles,drivers,currentUser,admin,onDone}:{vehicles:Vehicle[];drivers:Profile[];currentUser:Profile;admin:boolean;onDone:()=>void}){const [msg,setMsg]=useState('');return <section className="panel"><div className="panel-head"><div><h3>Abastecimentos</h3><p>Registre litros, valor e quilometragem para acompanhar consumo</p></div></div><form className="inline-form" onSubmit={async e=>{e.preventDefault();if(!supabase)return;const f=new FormData(e.currentTarget);const {error}=await supabase.from('fuel_logs').insert({vehicle_id:f.get('vehicle'),driver_id:admin?(f.get('driver')||null):currentUser.id,liters:Number(f.get('liters')),total_cost:Number(f.get('cost')),odometer_km:Number(f.get('km')),station:f.get('station')||null});if(error){setMsg(error.message);return;}setMsg('Abastecimento registrado.');onDone();}}><select name="vehicle" required>{vehicles.map(v=><option key={v.id} value={v.id}>{v.plate} · {v.model}</option>)}</select>{admin&&<select name="driver"><option value="">Motorista (opcional)</option>{drivers.map(d=><option key={d.id} value={d.id}>{d.full_name}</option>)}</select>}<input name="liters" type="number" step="0.01" min="0.01" placeholder="Litros" required/><input name="cost" type="number" step="0.01" min="0" placeholder="Valor total R$" required/><input name="km" type="number" min="0" placeholder="KM atual" required/><input name="station" placeholder="Posto"/><button className="primary">Salvar abastecimento</button></form>{msg&&<p className="hint">{msg}</p>}</section>}
+
+function Maintenance({vehicles,admin,onDone}:{vehicles:Vehicle[];admin:boolean;onDone:()=>void}){
+  type MaintenanceRecord={
+    id:string;
+    vehicle_id:string;
+    description:string;
+    cost:number;
+    service_date:string;
+    status:string;
+    completed_at:string|null;
+    created_at:string;
+  };
+
+  const [msg,setMsg]=useState('');
+  const [logs,setLogs]=useState<MaintenanceRecord[]>([]);
+  const [loading,setLoading]=useState(true);
+  const [busyId,setBusyId]=useState('');
+
+  async function loadHistory(){
+    if(!supabase)return;
+    setLoading(true);
+
+    const {data,error}=await supabase
+      .from('maintenance')
+      .select('*')
+      .order('created_at',{ascending:false})
+      .limit(300);
+
+    if(error){
+      setMsg('Erro ao carregar histórico: '+error.message);
+    }else{
+      setLogs((data||[]) as MaintenanceRecord[]);
+    }
+
+    setLoading(false);
+  }
+
+  useEffect(()=>{
+    void loadHistory();
+  },[]);
+
+  async function registerMaintenance(e:React.FormEvent<HTMLFormElement>){
+    e.preventDefault();
+    if(!supabase)return;
+
+    const form=e.currentTarget;
+    const data=new FormData(form);
+    const vehicleId=String(data.get('vehicle')||'');
+    const vehicle=vehicles.find(v=>v.id===vehicleId);
+
+    if(!vehicleId){
+      setMsg('Selecione um veículo.');
+      return;
+    }
+
+    if(vehicle?.status==='in_use'){
+      setMsg('Este veículo está em uso. Não é possível enviá-lo para manutenção.');
+      return;
+    }
+
+    if(vehicle?.status==='inactive'){
+      setMsg('Este veículo está inativo. Não é possível enviá-lo para manutenção.');
+      return;
+    }
+
+    setMsg('');
+
+    const {error}=await supabase.from('maintenance').insert({
+      vehicle_id:vehicleId,
+      description:String(data.get('description')||''),
+      cost:Number(data.get('cost'))||0,
+      service_date:data.get('date'),
+      status:'open'
+    });
+
+    if(error){
+      setMsg('Erro ao registrar manutenção: '+error.message);
+      return;
+    }
+
+    const {error:vehicleError}=await supabase
+      .from('vehicles')
+      .update({status:'maintenance'})
+      .eq('id',vehicleId);
+
+    if(vehicleError){
+      setMsg('Manutenção registrada, mas não foi possível atualizar o veículo: '+vehicleError.message);
+    }else{
+      setMsg('Manutenção registrada com sucesso.');
+    }
+
+    form.reset();
+    await loadHistory();
+    onDone();
+  }
+
+  async function finishMaintenance(item:MaintenanceRecord){
+    if(!supabase)return;
+
+    if(!window.confirm('Deseja finalizar esta manutenção e liberar o veículo?')){
+      return;
+    }
+
+    setBusyId(item.id);
+    setMsg('');
+
+    const {data:updated,error}=await supabase
+      .from('maintenance')
+      .update({status:'completed',completed_at:new Date().toISOString()})
+      .eq('id',item.id)
+      .eq('status','open')
+      .select('id,status')
+      .maybeSingle();
+
+    if(error){
+      setMsg('Erro ao finalizar manutenção: '+String(error));
+      setBusyId('');
+      return;
+    }
+
+    if(!updated){
+      setMsg('O Supabase não confirmou a conclusão. Verifique as permissões de alteração da tabela maintenance (RLS).');
+      setBusyId('');
+      return;
+    }
+
+    
+
+    const {data:openItems,error:checkError}=await supabase
+      .from('maintenance')
+      .select('id')
+      .eq('vehicle_id',item.vehicle_id)
+      .eq('status','open');
+
+    if(checkError){
+      setMsg('Manutenção finalizada, mas não foi possível conferir outras manutenções abertas. Verifique o veículo. '+checkError.message);
+      await loadHistory();
+      setBusyId('');
+      return;
+    }
+
+    if(!openItems||openItems.length===0){
+      const {error:vehicleError}=await supabase
+        .from('vehicles')
+        .update({status:'available'})
+        .eq('id',item.vehicle_id)
+        .eq('status','maintenance');
+
+      if(vehicleError){
+        setMsg('Manutenção finalizada, mas houve erro ao liberar o veículo: '+vehicleError.message);
+        await loadHistory();
+        setBusyId('');
+        return;
+      }
+    }
+
+    setMsg('Manutenção finalizada. Histórico preservado.');
+    await loadHistory();
+    onDone();
+    setBusyId('');
+  }
+
+  const openLogs=logs.filter(item=>item.status==='open');
+
+  return (
+    <section className='panel'>
+      <div className='panel-head'>
+        <div>
+          <h3>Controle de manutenção</h3>
+          <p>Registre serviços, acompanhe o histórico e libere veículos após a conclusão.</p>
+        </div>
+        <button className='small-btn' type='button' onClick={()=>void loadHistory()}>
+          Atualizar histórico
+        </button>
+      </div>
+
+      {admin&&(
+        <form className='inline-form' onSubmit={registerMaintenance}>
+          <select name='vehicle' required defaultValue=''>
+            <option value='' disabled>Selecione o veículo</option>
+            {vehicles.map(v=>(
+              <option
+                value={v.id}
+                key={v.id}
+                disabled={v.status==='in_use'||v.status==='inactive'}
+              >
+                {v.plate} · {v.model}
+                {v.status==='maintenance'?' (Em manutenção)':''}
+              </option>
+            ))}
+          </select>
+
+          <input name='description' required placeholder='Serviço realizado'/>
+          <input name='date' type='date' required/>
+          <input name='cost' type='number' min='0' step='0.01' placeholder='Custo R$'/>
+          <button className='primary' type='submit'>Registrar manutenção</button>
+        </form>
+      )}
+
+      {msg&&<p className='hint'>{msg}</p>}
+
+      <div className='panel-head'>
+        <div>
+          <h3>Veículos em manutenção</h3>
+          <p>Manutenções que ainda estão abertas.</p>
+        </div>
+      </div>
+
+      {loading?(
+        <div className='empty'>Carregando histórico...</div>
+      ):openLogs.length===0?(
+        <div className='empty'>Nenhum veículo com manutenção em aberto.</div>
+      ):(
+        <div className='table-wrap'>
+          <table>
+            <thead>
+              <tr>
+                <th>Veículo</th>
+                <th>Serviço</th>
+                <th>Data</th>
+                {admin&&<th>Custo</th>}
+                <th>Situação</th>
+                {admin&&<th>Ação</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {openLogs.map(item=>{
+                const vehicle=vehicles.find(v=>v.id===item.vehicle_id);
+                return (
+                  <tr key={item.id}>
+                    <td><b>{vehicle?.plate||'Veículo'}</b></td>
+                    <td>{item.description}</td>
+                    <td>
+                      {item.service_date
+                        ?new Date(item.service_date+'T12:00:00').toLocaleDateString('pt-BR')
+                        :'—'}
+                    </td>
+                    {admin&&<td>{fmtMoney(Number(item.cost||0))}</td>}
+                    <td><span className='pill purple'>Em manutenção</span></td>
+                    {admin&&(
+                      <td>
+                        <button
+                          className='small-btn'
+                          type='button'
+                          disabled={busyId===item.id}
+                          onClick={()=>void finishMaintenance(item)}
+                        >
+                          {busyId===item.id?'Finalizando...':'Finalizar manutenção'}
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className='panel-head'>
+        <div>
+          <h3>Histórico de manutenções</h3>
+          <p>Registros recentes, incluindo serviços concluídos.</p>
+        </div>
+      </div>
+
+      {loading?(
+        <div className='empty'>Carregando histórico...</div>
+      ):logs.length===0?(
+        <div className='empty'>Nenhuma manutenção registrada.</div>
+      ):(
+        <div className='table-wrap'>
+          <table>
+            <thead>
+              <tr>
+                <th>Veículo</th>
+                <th>Serviço</th>
+                <th>Data do serviço</th>
+                {admin&&<th>Custo</th>}
+                <th>Situação</th>
+                <th>Conclusão</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map(item=>{
+                const vehicle=vehicles.find(v=>v.id===item.vehicle_id);
+                return (
+                  <tr key={item.id}>
+                    <td><b>{vehicle?.plate||'Veículo'}</b></td>
+                    <td>{item.description}</td>
+                    <td>
+                      {item.service_date
+                        ?new Date(item.service_date+'T12:00:00').toLocaleDateString('pt-BR')
+                        :'—'}
+                    </td>
+                    {admin&&<td>{fmtMoney(Number(item.cost||0))}</td>}
+                    <td>
+                      <span className={'pill '+(item.status==='completed'?'green':'purple')}>
+                        {item.status==='completed'?'Concluída':'Em aberto'}
+                      </span>
+                    </td>
+                    <td>
+                      {item.completed_at
+                        ?new Date(item.completed_at).toLocaleString('pt-BR')
+                        :'—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+function FuelLog({vehicles,drivers,currentUser,admin,onDone}:{vehicles:Vehicle[];drivers:Profile[];currentUser:Profile;admin:boolean;onDone:()=>void}){type FuelRecord={id:string;vehicle_id:string;driver_id:string|null;liters:number;total_cost:number;odometer_km:number;station:string|null;fueled_at:string};const [msg,setMsg]=useState('');const [logs,setLogs]=useState<FuelRecord[]>([]);const [loading,setLoading]=useState(true);const [vehicleFilter,setVehicleFilter]=useState('all');async function loadLogs(){if(!supabase)return;setLoading(true);const {data,error}=await supabase.from('fuel_logs').select('*').order('fueled_at',{ascending:false}).limit(200);if(error){setMsg('Erro ao carregar histórico: '+error.message);}else{setLogs((data||[]) as FuelRecord[]);}setLoading(false);}useEffect(()=>{void loadLogs();},[]);const visibleLogs=logs.filter(item=>vehicleFilter==='all'||item.vehicle_id===vehicleFilter);const totalLiters=visibleLogs.reduce((sum,item)=>sum+Number(item.liters||0),0);const totalCost=visibleLogs.reduce((sum,item)=>sum+Number(item.total_cost||0),0);return <section className='panel'><div className='panel-head'><div><h3>Abastecimentos</h3><p>Registre e acompanhe os abastecimentos da frota</p></div></div><form className='inline-form' onSubmit={async e=>{e.preventDefault();if(!supabase)return;const form=e.currentTarget;const f=new FormData(form);const {error}=await supabase.from('fuel_logs').insert({vehicle_id:f.get('vehicle'),driver_id:admin?(f.get('driver')||null):currentUser.id,liters:Number(f.get('liters')),total_cost:Number(f.get('cost')),odometer_km:Number(f.get('km')),station:f.get('station')||null});if(error){setMsg('Erro ao registrar: '+error.message);return;}form.reset();setMsg('Abastecimento registrado com sucesso.');await loadLogs();onDone();}}><select name='vehicle' required defaultValue=''><option value='' disabled>Selecione o veículo</option>{vehicles.map(v=><option key={v.id} value={v.id}>{v.plate} · {v.model}</option>)}</select>{admin&&<select name='driver' defaultValue=''><option value=''>Motorista (opcional)</option>{drivers.filter(d=>d.role==='driver').map(d=><option key={d.id} value={d.id}>{d.full_name}</option>)}</select>}<input name='liters' type='number' step='0.01' min='0.01' placeholder='Litros abastecidos' required/><input name='cost' type='number' step='0.01' min='0' placeholder='Valor total R$' required/><input name='km' type='number' min='0' placeholder='KM atual' required/><input name='station' placeholder='Nome do posto'/><button className='primary'>Salvar abastecimento</button></form>{msg&&<p className='hint'>{msg}</p>}{admin&&<div className='panel-head'><div><h3>Filtro por veículo</h3><p>Selecione um veículo para consultar seus abastecimentos e gastos</p></div><select value={vehicleFilter} onChange={e=>setVehicleFilter(e.target.value)}><option value='all'>Todos os veículos</option>{vehicles.map(v=><option key={v.id} value={v.id}>{v.plate} · {v.model}</option>)}</select></div>}<div className='stats'><div className='stat'><div className='stat-icon orange'><Fuel/></div><div><span>Total abastecido{admin?' no filtro':''}</span><b>{totalLiters.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})} L</b></div></div>{admin&&<div className='stat'><div className='stat-icon green'><Activity/></div><div><span>Total gasto</span><b>{fmtMoney(totalCost)}</b></div></div>}</div><div className='panel-head'><div><h3>Histórico de abastecimentos</h3><p>{visibleLogs.length} registro(s) exibido(s), do mais recente ao mais antigo</p></div><button className='small-btn' type='button' onClick={()=>void loadLogs()}>Atualizar histórico</button></div>{loading?<div className='empty'>Carregando histórico...</div>:visibleLogs.length===0?<div className='empty'>Nenhum abastecimento encontrado para este filtro.</div>:<div className='table-wrap'><table><thead><tr><th>Data e hora</th><th>Veículo</th><th>Motorista</th><th>Litros</th>{admin&&<th>Valor</th>}<th>KM</th><th>Posto</th></tr></thead><tbody>{visibleLogs.map(item=>{const vehicle=vehicles.find(v=>v.id===item.vehicle_id);const driver=drivers.find(d=>d.id===item.driver_id);return <tr key={item.id}><td>{item.fueled_at?new Date(item.fueled_at).toLocaleString('pt-BR'):'—'}</td><td><b>{vehicle?.plate||'Veículo'}</b></td><td>{driver?.full_name||'—'}</td><td>{Number(item.liters).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})} L</td>{admin&&<td>{fmtMoney(Number(item.total_cost))}</td>}<td>{fmtKm(Number(item.odometer_km))}</td><td>{item.station||'—'}</td></tr>})}</tbody></table></div>}</section>}
 function Modal({title,onClose,children}:{title:string;onClose:()=>void;children:ReactNode}){return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={e=>e.stopPropagation()}><div className="modal-head"><h3>{title}</h3><button className="icon-btn" onClick={onClose}><X/></button></div>{children}</div></div>}
 function SetupScreen(){return <div className="login-wrap"><div className="login-card"><img src="/logo-vm.png" className="login-logo"/><h1>VM <span>FROTAS</span></h1><div className="setup-box"><b>Configuração inicial necessária</b><p>Crie o projeto no Supabase, execute o arquivo <code>supabase/schema.sql</code> e configure as variáveis de ambiente no arquivo <code>.env</code>.</p><p>Consulte o <code>README.md</code> incluído no projeto para seguir o passo a passo.</p></div></div></div>}
