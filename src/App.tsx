@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { Activity, ArrowDownToLine, ArrowUpFromLine, Bell, CarFront, CheckCircle2, ChevronRight, ClipboardList, Fuel, Gauge, LayoutDashboard, LogOut, Menu, Plus, Search, Settings, ShieldCheck, Truck, Users, Wrench, X, Pencil, Trash2 } from 'lucide-react';
 import { fmtKm, fmtMoney, isConfigured, supabase, type Profile, type Vehicle } from './lib';
@@ -440,6 +440,26 @@ function Maintenance({vehicles,admin,onDone}:{vehicles:Vehicle[];admin:boolean;o
     await loadRecords();
     onDone();
   }
+  async function releaseVehicle(vehicle:Vehicle){
+    if(!supabase||!admin)return;
+
+    if(!window.confirm(
+      `Confirma retirar o veículo ${vehicle.plate} da manutenção e deixá-lo disponível?`
+    ))return;
+
+    const {error}=await supabase
+      .from('vehicles')
+      .update({status:'available'})
+      .eq('id',vehicle.id);
+
+    if(error){
+      setMsg('Não foi possível liberar o veículo: '+error.message);
+      return;
+    }
+
+    setMsg(`Veículo ${vehicle.plate} liberado e disponível para retirada.`);
+    onDone();
+  }
 
   return <section className="panel">
     <div className="panel-head"><div><h3>Controle de manutenção</h3><p>Registre manutenções e acompanhe os veículos em oficina</p></div></div>
@@ -467,8 +487,44 @@ function Maintenance({vehicles,admin,onDone}:{vehicles:Vehicle[];admin:boolean;o
       <input name="cost" type="number" min="0" step="0.01" placeholder="Custo R$"/>
       <button className="primary">Registrar</button>
     </form>}
-    {msg&&<p className="hint">{msg}</p>}
-    {admin&&<>
+      {msg&&<p className="hint">{msg}</p>}
+
+{admin&&(
+  <div style={{marginTop:24}}>
+    <div className="panel-head">
+      <div>
+        <h3>Veículos em manutenção</h3>
+        <p>Libere os veículos quando retornarem da oficina</p>
+      </div>
+    </div>
+
+    {vehicles.filter(v=>v.status==='maintenance').length===0 ? (
+      <p className="empty">Nenhum veículo em manutenção.</p>
+    ) : (
+      <div className="vehicle-list">
+        {vehicles.filter(v=>v.status==='maintenance').map(vehicle=>(
+          <div className="vehicle-row" key={vehicle.id}>
+            <div className="vehicle-icon"><CarFront/></div>
+            <div className="vehicle-info">
+              <b>{vehicle.plate} · {vehicle.brand} {vehicle.model}</b>
+              <small>{fmtKm(vehicle.current_km)}</small>
+            </div>
+            <span className="pill purple">Em manutenção</span>
+            <button
+              type="button"
+              className="small-btn"
+              onClick={()=>releaseVehicle(vehicle)}
+            >
+              <CheckCircle2 size={15}/> Retirar da manutenção
+            </button>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+)}
+
+{admin&&<>  
       <div className="panel-head" style={{marginTop:24}}><div><h3>Histórico de manutenções</h3><p>Registros mais recentes</p></div></div>
       {loadingRecords?<p className="empty">Carregando histórico...</p>:records.length===0?<p className="empty">Nenhuma manutenção registrada.</p>:
         <div className="table-wrap"><table><thead><tr><th>Data</th><th>Veículo</th><th>Serviço</th><th>Custo</th><th>Ação</th></tr></thead><tbody>
