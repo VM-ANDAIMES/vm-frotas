@@ -347,6 +347,8 @@ function TripRows({
           <tr>
             <th>Veículo</th>
             <th>Motorista</th>
+            <th>Data/hora retirada</th>
+            <th>Data/hora devolução</th>
             <th>KM saída</th>
             <th>KM retorno</th>
             {detailed && <th>Distância</th>}
@@ -366,6 +368,16 @@ function TripRows({
               <tr key={t.id}>
                 <td><b>{v?.plate || 'Veículo'}</b></td>
                 <td>{d?.full_name || 'Motorista'}</td>
+<td>
+  {t.started_at
+    ? new Date(t.started_at).toLocaleString('pt-BR')
+    : '—'}
+</td>
+<td>
+  {t.ended_at
+    ? new Date(t.ended_at).toLocaleString('pt-BR')
+    : 'Em aberto'}
+</td>
                 <td>{fmtKm(t.start_km)}</td>
                 <td>{t.end_km === null ? '—' : fmtKm(t.end_km)}</td>
 
