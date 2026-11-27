@@ -1,0 +1,63 @@
+
+name: Backup diario VM FROTAS
+
+on:
+  schedule:
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar ferramentas
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client rclone
+
+      - name: Configurar Google Drive
+        env:
+          RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/rclone"
+          printf '%s' "$RCLONE_CONFIG_B64" \
+            | sed '/-----BEGIN CERTIFICATE-----/d; /-----END CERTIFICATE-----/d' \
+            | tr -d '\r\n ' \
+            | base64 --decode > "$HOME/.config/rclone/rclone.conf"
+          chmod 600 "$HOME/.config/rclone/rclone.conf"
+          rclone lsd drive: >/dev/null
+
+      - name: Backup banco Supabase
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          PGSSLMODE: require
+        run: |
+          set -euo pipefail
+          DATE="$(date -u +%Y-%m-%d)"
+          BACKUP_DIR="$RUNNER_TEMP/vm-frotas-backup/$DATE"
+          mkdir -p "$BACKUP_DIR"
+          pg_dump "$SUPABASE_DB_URL" --no-owner --no-privileges --format=custom --file="$BACKUP_DIR/supabase-vm-frotas.dump"
+          test -s "$BACKUP_DIR/supabase-vm-frotas.dump"
+
+      - name: Backup codigo
+        run: |
+          set -euo pipefail
+          DATE="$(date -u +%Y-%m-%d)"
+          BACKUP_DIR="$RUNNER_TEMP/vm-frotas-backup/$DATE"
+          tar --exclude='./.git' --exclude='./node_modules' --exclude='./dist' --exclude='./android' -czf "$BACKUP_DIR/vm-frotas-source.tar.gz" .
+          test -s "$BACKUP_DIR/vm-frotas-source.tar.gz"
+
+      - name: Enviar backup ao Google Drive
+        run: |
+          set -euo pipefail
+          DATE="$(date -u +%Y-%m-%d)"
+          rclone copy "$RUNNER_TEMP/vm-frotas-backup/$DATE" "drive:Backups VM FROTAS/$DATE"
+          rclone ls "drive:Backups VM FROTAS/$DATE"
